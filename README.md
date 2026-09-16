@@ -329,7 +329,3 @@ Main firmware:
 ```text
 Samsung_TAS5807_ESP32_A2DP.ino
 ```
-
-## License
-
-No license has been selected yet. Add a license before redistributing the project if you want to define explicit reuse terms.

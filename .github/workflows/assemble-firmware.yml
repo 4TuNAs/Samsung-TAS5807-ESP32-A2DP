@@ -1,0 +1,41 @@
+name: Assemble firmware
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.source_chunks/**'
+      - '.github/workflows/assemble-firmware.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assemble source
+        run: cat .source_chunks/part*.txt > Samsung_TAS5807_ESP32_A2DP.ino
+
+      - name: Verify source
+        run: |
+          test $(wc -l < Samsung_TAS5807_ESP32_A2DP.ino) -eq 2259
+          grep -q 'BluetoothA2DPSink' Samsung_TAS5807_ESP32_A2DP.ino
+          grep -q 'void setup()' Samsung_TAS5807_ESP32_A2DP.ino
+          grep -q 'void loop()' Samsung_TAS5807_ESP32_A2DP.ino
+
+      - name: Commit assembled firmware
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Samsung_TAS5807_ESP32_A2DP.ino
+          if git diff --cached --quiet; then
+            echo 'Firmware already up to date'
+          else
+            git commit -m 'Add complete ESP32 TAS5807 A2DP firmware'
+            git push
+          fi

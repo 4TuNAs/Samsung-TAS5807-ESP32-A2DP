@@ -1,0 +1,400 @@
+  tw(0x34, 0x00);   // no data offset
+  tw(0x35, 0x11);   // L->L, R->R
+  tw(0x78, 0x80);   // clear faults
+  tw(0x03, 0x0E);   // Hi-Z + mute until audio arrives
+}
+
+// ============================================================
+// TAS PLAY / MUTE
+// ============================================================
+
+void tasPlay()
+{
+  book0();
+  tw(0x78, 0x80);
+  delay(2);
+  tw(0x03, 0x03);   // Play, unmuted
+  tasIsPlaying = true;
+  lastPlayCmdAt = millis();
+  Serial.println(">>> TAS PLAY");
+}
+
+void tasMute()
+{
+  book0();
+  tw(0x03, 0x0E);   // Hi-Z + mute
+  tasIsPlaying = false;
+  forcedPlay = false;
+  Serial.println(">>> TAS Hi-Z");
+}
+
+// ============================================================
+// FAULT MONITOR
+// ============================================================
+
+uint32_t lastFaultPoll = 0;
+uint8_t  lastFaultSig[4] = {0, 0, 0, 0};
+uint8_t  lastClkErr = 0;
+uint32_t restartTimes[5] = {0, 0, 0, 0, 0};
+uint8_t  restartIdx = 0;
+uint32_t totalRestarts = 0;
+
+void pollFaults()
+{
+  uint32_t now = millis();
+  if (now - lastFaultPoll < 1000)
+    return;
+  lastFaultPoll = now;
+
+  uint8_t f[4] = {0, 0, 0, 0};
+  uint8_t clk = 0;
+  uint8_t pwr = 0;
+
+  book0();
+  tr(0x70, f[0]);
+  tr(0x71, f[1]);
+  tr(0x72, f[2]);
+  tr(0x73, f[3]);
+  tr(0x39, clk);
+  bool pwrOk = tr(0x68, pwr);
+
+  if (memcmp(f, lastFaultSig, 4) != 0)
+  {
+    Serial.printf("TAS FAULT REG: CHAN=%02X GLOB1=%02X GLOB2=%02X WARN=%02X\n",
+                  f[0], f[1], f[2], f[3]);
+    memcpy(lastFaultSig, f, 4);
+  }
+
+  // bit 3 of CLKDET = "PLL locked" (normal), other bits = clock errors
+  uint8_t clkErr = clk & (uint8_t)~0x08;
+  if (clkErr != lastClkErr)
+  {
+    Serial.printf("TAS CLOCK STATUS: 0x%02X%s\n",
+                  clk, clkErr ? "  <-- clock error" : "  (ok)");
+    lastClkErr = clkErr;
+  }
+
+  if (!tasIsPlaying || !pwrOk || now - lastPlayCmdAt < 1000)
+    return;
+
+  if (pwr == 0x03)
+    return;
+
+  // Amplifier left PLAY on its own -> protection tripped
+  totalRestarts++;
+  restartTimes[restartIdx] = now;
+  restartIdx = (restartIdx + 1) % 5;
+
+  int recent = 0;
+  for (int i = 0; i < 5; i++)
+    if (restartTimes[i] != 0 && now - restartTimes[i] < 60000)
+      recent++;
+
+  Serial.printf("!!! Amp dropped out (POWER_STATE=%02X), restart #%lu\n",
+                pwr, (unsigned long)totalRestarts);
+
+  if (recent >= 5)
+  {
+    faultLatched = true;
+    tasMute();
+    Serial.println("!!! 5 faults in 60 s: amplifier stays OFF.");
+    Serial.println("    Check power supply / speaker wiring, then send 'p' or reconnect.");
+    return;
+  }
+
+  tw(0x78, 0x80);
+  delay(20);
+  tw(0x03, 0x03);
+  lastPlayCmdAt = millis();
+}
+
+// ============================================================
+// AUDIO STATS
+// ============================================================
+
+uint32_t statUnderruns = 0;
+uint32_t statOverflows = 0;
+uint32_t statFill      = 0;
+int32_t  statPpm       = 0;
+
+// ============================================================
+// STATUS
+// ============================================================
+
+void status()
+{
+  book0();
+
+  Serial.println();
+  Serial.println("========== TAS ==========");
+
+  show(0x03, "CTRL2");
+  show(0x68, "PWR_STATE");   // 3 = play, 2 = Hi-Z
+  show(0x02, "CTRL1");
+  show(0x33, "SAP_CTRL1");
+  show(0x4C, "DIG_VOL");
+  show(0x54, "AGAIN");
+  show(0x66, "DSP_MISC");
+
+  Serial.println("CLOCK:");
+  show(0x37, "FS_MON");
+  show(0x38, "BCK_MON");     // 0x40 = 64 x Fs
+  show(0x39, "CLKDET");      // 0x08 = PLL locked (normal)
+
+  Serial.println("FAULT:");
+  show(0x70, "CHAN_FLT");
+  show(0x71, "GLOB_FLT1");
+  show(0x72, "GLOB_FLT2");
+  show(0x73, "WARNING");
+
+  Serial.println("---------- STATE ----------");
+  Serial.printf("BT: %s | amp: %s%s\n",
+                btConnected ? "connected" : "not connected",
+                tasIsPlaying ? "PLAY" : "Hi-Z",
+                faultLatched ? " (FAULT LATCHED)" : "");
+  printVolume();
+  Serial.printf("Max volume: %.1f dB | analog gain: -%.1f dB\n",
+                cfg.maxDbX2 / 2.0f, cfg.again * 0.5f);
+  printEq();
+  Serial.printf("Channels: %s, balance %+d\n", MODE_NAMES[cfg.mode], cfg.balance);
+  Serial.printf("AUDIO: fifo=%lu underruns=%lu overflows=%lu drift=%ld ppm restarts=%lu\n",
+                (unsigned long)statFill, (unsigned long)statUnderruns,
+                (unsigned long)statOverflows, (long)statPpm,
+                (unsigned long)totalRestarts);
+
+  Serial.println("===========================");
+}
+
+void dumpPage0()
+{
+  book0();
+  Serial.println();
+  Serial.println("     0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F");
+  for (int r = 0; r < 0x80; r++)
+  {
+    if ((r & 0x0F) == 0) Serial.printf("%02X: ", r);
+    uint8_t v;
+    if (tr((uint8_t)r, v)) Serial.printf("%02X ", v);
+    else                   Serial.printf("-- ");
+    if ((r & 0x0F) == 0x0F) Serial.println();
+  }
+}
+
+void printHelp()
+{
+  Serial.println();
+  Serial.println("---------------- COMMANDS ----------------");
+  Serial.println("s / status        full status");
+  Serial.println("d / dump          dump TAS page 0 registers");
+  Serial.println("+ / -             volume up / down");
+  Serial.println("vol <0-127>       set volume (like phone slider)");
+  Serial.println("maxvol <dB>       volume at 127, e.g. maxvol -10 (-40..0)");
+  Serial.println("again <0-31>      analog gain limit, 0 = max, step -0.5 dB");
+  Serial.println("bass <dB>         -12..12  (100 Hz shelf)");
+  Serial.println("mid <dB>          -12..12  (1 kHz)");
+  Serial.println("treble <dB>       -12..12  (8 kHz shelf)");
+  Serial.println("preset <name>     flat, bass, rock, vocal, night");
+  Serial.println("eq                show EQ");
+  Serial.println("seq on|off        Samsung speaker EQ");
+  Serial.println("mode stereo|mono|swap");
+  Serial.println("bal <-100..100>   balance (- = left, + = right)");
+  Serial.println("play / pause / next / prev   control the phone");
+  Serial.println("p                 force amplifier PLAY (clears fault latch)");
+  Serial.println("m                 amplifier Hi-Z");
+  Serial.println("save              save settings now (auto-save after 3 s)");
+  Serial.println("reset             factory defaults");
+  Serial.println("------------------------------------------");
+}
+
+// ============================================================
+// I2S: 48 kHz, Philips, 32-bit data in 32-bit slots
+// ESP32 classic: slot width MUST equal data width
+// ============================================================
+
+bool startI2S()
+{
+  i2s_chan_config_t chanCfg =
+    I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+
+  chanCfg.dma_desc_num  = 8;
+  chanCfg.dma_frame_num = 256;
+
+  esp_err_t err = i2s_new_channel(&chanCfg, &txHandle, nullptr);
+  if (err != ESP_OK)
+  {
+    Serial.printf("i2s_new_channel=%d\n", err);
+    return false;
+  }
+
+  i2s_std_config_t cfgI2s;
+  memset(&cfgI2s, 0, sizeof(cfgI2s));
+
+  i2s_std_clk_config_t clk = I2S_STD_CLK_DEFAULT_CONFIG(OUT_RATE);
+  i2s_std_slot_config_t slot =
+    I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT,
+                                        I2S_SLOT_MODE_STEREO);
+
+  cfgI2s.clk_cfg  = clk;
+  cfgI2s.slot_cfg = slot;
+
+#if USE_APLL
+  cfgI2s.clk_cfg.clk_src = I2S_CLK_SRC_APLL;
+#endif
+
+  cfgI2s.gpio_cfg.mclk = I2S_GPIO_UNUSED;
+  cfgI2s.gpio_cfg.bclk = (gpio_num_t)I2S_BCLK_PIN;
+  cfgI2s.gpio_cfg.ws   = (gpio_num_t)I2S_LRCLK_PIN;
+  cfgI2s.gpio_cfg.dout = (gpio_num_t)I2S_DATA_PIN;
+  cfgI2s.gpio_cfg.din  = I2S_GPIO_UNUSED;
+  cfgI2s.gpio_cfg.invert_flags.mclk_inv = false;
+  cfgI2s.gpio_cfg.invert_flags.bclk_inv = false;
+  cfgI2s.gpio_cfg.invert_flags.ws_inv   = false;
+
+  err = i2s_channel_init_std_mode(txHandle, &cfgI2s);
+
+#if USE_APLL
+  if (err != ESP_OK)
+  {
+    Serial.printf("APLL init failed (%d), fallback to default clock\n", err);
+    cfgI2s.clk_cfg.clk_src = I2S_CLK_SRC_DEFAULT;
+    err = i2s_channel_init_std_mode(txHandle, &cfgI2s);
+  }
+#endif
+
+  if (err != ESP_OK)
+  {
+    Serial.printf("i2s_channel_init=%d\n", err);
+    return false;
+  }
+
+  err = i2s_channel_enable(txHandle);
+  if (err != ESP_OK)
+  {
+    Serial.printf("i2s_enable=%d\n", err);
+    return false;
+  }
+
+  Serial.println("I2S: 48000 Hz, Philips, 32-bit data / 32-bit slots, BCLK 3.072 MHz");
+  return true;
+}
+
+// ============================================================
+// INPUT PCM FIFO (A2DP -> audio task)
+// ============================================================
+
+#define FIFO_FRAMES   8192
+#define FIFO_TARGET   (FIFO_FRAMES / 2)
+
+Stereo16 pcmFifo[FIFO_FRAMES];
+
+uint32_t fifoRead  = 0;
+uint32_t fifoWrite = 0;
+
+portMUX_TYPE fifoMux = portMUX_INITIALIZER_UNLOCKED;
+
+void fifoClear()
+{
+  portENTER_CRITICAL(&fifoMux);
+  fifoRead = 0;
+  fifoWrite = 0;
+  portEXIT_CRITICAL(&fifoMux);
+}
+
+uint32_t fifoCount()
+{
+  portENTER_CRITICAL(&fifoMux);
+  uint32_t r = fifoRead;
+  uint32_t w = fifoWrite;
+  portEXIT_CRITICAL(&fifoMux);
+
+  return (w >= r) ? (w - r) : (FIFO_FRAMES - r + w);
+}
+
+void fifoPush(const int16_t *samples, uint32_t frames)
+{
+  portENTER_CRITICAL(&fifoMux);
+
+  for (uint32_t i = 0; i < frames; i++)
+  {
+    uint32_t next = fifoWrite + 1;
+    if (next >= FIFO_FRAMES) next = 0;
+
+    if (next == fifoRead)
+    {
+      fifoRead++;
+      if (fifoRead >= FIFO_FRAMES) fifoRead = 0;
+      statOverflows++;
+    }
+
+    pcmFifo[fifoWrite].l = samples[i * 2];
+    pcmFifo[fifoWrite].r = samples[i * 2 + 1];
+    fifoWrite = next;
+  }
+
+  portEXIT_CRITICAL(&fifoMux);
+}
+
+uint32_t fifoPopBlock(Stereo16 *dst, uint32_t maxFrames)
+{
+  uint32_t n = 0;
+
+  portENTER_CRITICAL(&fifoMux);
+  while (n < maxFrames && fifoRead != fifoWrite)
+  {
+    dst[n++] = pcmFifo[fifoRead];
+    fifoRead++;
+    if (fifoRead >= FIFO_FRAMES) fifoRead = 0;
+  }
+  portEXIT_CRITICAL(&fifoMux);
+
+  return n;
+}
+
+// ============================================================
+// A2DP CALLBACKS (no I2C here - only flags)
+// ============================================================
+
+volatile uint32_t pendingSourceRate = 44100;
+volatile bool     sourceRateChanged = false;
+
+portMUX_TYPE metaMux = portMUX_INITIALIZER_UNLOCKED;
+char metaTitle[96]  = "";
+char metaArtist[96] = "";
+char metaAlbum[96]  = "";
+volatile bool     metaChanged = false;
+volatile uint32_t metaAt = 0;
+
+void btAudio(const uint8_t *data, uint32_t length)
+{
+  if (!data || length < 4)
+    return;
+
+  fifoPush((const int16_t *)data, length / 4);
+
+  lastPcmMillis = millis();
+
+  if (!tasIsPlaying)
+    playRequest = true;
+}
+
+void btSampleRate(uint16_t rate)
+{
+  if (rate < 8000 || rate > 48000)
+    return;
+
+  pendingSourceRate = rate;
+  sourceRateChanged = true;
+}
+
+void btAudioState(esp_a2d_audio_state_t state, void *ptr)
+{
+  Serial.printf("A2DP AUDIO = %s\n", a2dp_sink.to_str(state));
+
+  if (state != ESP_A2D_AUDIO_STATE_STARTED)
+    muteRequest = true;
+}
+
+void btConnection(esp_a2d_connection_state_t state, void *ptr)
+{
+  Serial.printf("BT = %s\n", a2dp_sink.to_str(state));
+

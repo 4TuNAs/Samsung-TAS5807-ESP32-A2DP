@@ -1,0 +1,400 @@
+  W1(0x00,0x24),
+
+  // BQ1 (high-pass ~35 Hz, +16 dB)
+  // FIX: b0 was MISSING in the dump. b1 = -2*b2 exactly -> b0 = b2
+  W4(0x18,0x32,0x50,0x36,0x45),
+  W4(0x1C,0x9B,0x5F,0x93,0x76),
+  W4(0x20,0x32,0x50,0x36,0x45),
+  W4(0x24,0x0F,0xF2,0xBB,0x0B),
+  W4(0x28,0xF8,0x0D,0x39,0xFD),
+
+  // BQ2
+  W4(0x2C,0x07,0xFF,0x8E,0x36),
+  W4(0x30,0xF0,0x01,0xD6,0x9D),
+  W4(0x34,0x07,0xFE,0xA9,0x8C),
+  W4(0x38,0x0F,0xFE,0x29,0x63),
+  W4(0x3C,0xF8,0x01,0xC8,0x3F),
+
+  // BQ3 (peaking)
+  // FIX: b2 was MISSING. For peaking EQ: b0 + b2 = 1 - a2
+  W4(0x40,0x08,0x03,0x4C,0x60),
+  W4(0x44,0xF0,0x06,0xB9,0x83),
+  W4(0x48,0x07,0xF6,0x12,0xD5),
+  W4(0x4C,0x0F,0xF9,0x46,0x7D),
+  W4(0x50,0xF8,0x06,0xA0,0xCB),
+
+  // BQ4
+  W4(0x54,0x07,0xF8,0xB0,0x84),
+  W4(0x58,0xF0,0x1B,0x09,0x4D),
+  W4(0x5C,0x07,0xEC,0xE2,0xE1),
+  W4(0x60,0x0F,0xE4,0xF6,0xB3),
+  W4(0x64,0xF8,0x1A,0x6C,0x9B),
+
+  // BQ5
+  W4(0x68,0x07,0xF3,0x97,0x96),
+  W4(0x6C,0xF0,0x2D,0xDA,0x22),
+  W4(0x70,0x07,0xDF,0x8F,0x0D),
+  W4(0x74,0x0F,0xD2,0x25,0xDE),
+  W4(0x78,0xF8,0x2C,0xD9,0x5D),
+
+  // BQ6 b0 (continues on page 25)
+  W4(0x7C,0x07,0xF7,0x3C,0x75),
+
+  // BOOK AA PAGE 25 (still book AA)
+  W1(0x00,0x25),
+
+  W4(0x08,0xF0,0x32,0x4F,0xDB),
+  W4(0x0C,0x07,0xD9,0x44,0xD4),
+  W4(0x10,0x0F,0xCD,0xB0,0x25),
+  W4(0x14,0xF8,0x2F,0x7E,0xB6),
+  W4(0x18,0x07,0xE5,0x28,0x16),
+  W4(0x1C,0xF0,0xAA,0x4C,0x5C),
+  W4(0x20,0x07,0x78,0xF7,0xE9),
+  W4(0x24,0x0F,0x55,0xB3,0xA4),
+  W4(0x28,0xF8,0xA1,0xE0,0x01),
+  W4(0x2C,0x07,0x96,0x6D,0x4E),
+  W4(0x30,0xF1,0xAD,0xD4,0xE0),
+  W4(0x34,0x06,0xFC,0x75,0xCC),
+  W4(0x38,0x0E,0x52,0x2B,0x20),
+  W4(0x3C,0xF9,0x6D,0x1C,0xE7),
+  W4(0x40,0x07,0xC4,0x61,0xF9),
+  W4(0x44,0xF2,0x23,0xD1,0xAE),
+  W4(0x48,0x06,0xF8,0x86,0x91),
+  W4(0x4C,0x0D,0xDC,0x2E,0x52),
+  W4(0x50,0xF9,0x43,0x17,0x76),
+  W4(0x54,0x09,0x11,0xCE,0x57),
+  W4(0x58,0xF4,0xFB,0x56,0x90),
+  W4(0x5C,0x04,0x2E,0x93,0x3D),
+  W4(0x60,0x0B,0x04,0xA9,0x70),
+  W4(0x64,0xFA,0xBF,0x9E,0x6B),
+
+  W4(0x68,0x08,0x00,0x00,0x00),
+  W4(0x6C,0x00,0x00,0x00,0x00),
+  W4(0x70,0x00,0x00,0x00,0x00),
+  W4(0x74,0x00,0x00,0x00,0x00),
+  W4(0x78,0x00,0x00,0x00,0x00),
+
+  W4(0x7C,0x08,0x00,0x00,0x00),   // coefficient, book unchanged
+
+  // BOOK AA PAGE 26 (still book AA)
+  W1(0x00,0x26),
+
+  W4(0x08,0x00,0x00,0x00,0x00),
+  W4(0x0C,0x00,0x00,0x00,0x00),
+  W4(0x10,0x00,0x00,0x00,0x00),
+  W4(0x14,0x00,0x00,0x00,0x00),
+
+  W4(0x18,0x08,0x00,0x00,0x00),
+
+  W4(0x1C,0x00,0x00,0x00,0x00),
+  W4(0x20,0x00,0x00,0x00,0x00),
+  W4(0x24,0x00,0x00,0x00,0x00),
+  W4(0x28,0x00,0x00,0x00,0x00),
+
+  W4(0x2C,0x08,0x00,0x00,0x00),
+
+  W4(0x30,0x00,0x00,0x00,0x00),
+  W4(0x34,0x00,0x00,0x00,0x00),
+  W4(0x38,0x00,0x00,0x00,0x00),
+  W4(0x3C,0x00,0x00,0x00,0x00),
+
+  // FINAL: DSP volume back to 0 dB
+  W1(0x00,0x00),
+  W1(0x7F,0x8C),
+  W1(0x00,0x2A),
+
+  W4(0x24,0x00,0x80,0x00,0x00),
+  W4(0x28,0x00,0x80,0x00,0x00),
+
+  W1(0x00,0x00),
+  W1(0x7F,0x00),
+
+  W1(0x00,0x00),
+  W1(0x66,0x04),
+
+  W1(0xF7,0x00),   // from the dump (odd register, kept as captured)
+
+  W1(0x00,0x00),
+  W1(0x7F,0x00),
+  W1(0x4C,0x3D),
+
+  W1(0x00,0x00),
+  W1(0x7F,0x00),
+
+  W1(0x03,0x0E),
+  W1(0x03,0x0E),
+
+  W1(0x00,0x00),
+  W1(0x7F,0x00)
+};
+
+// Samsung EQ, left BQ1..BQ10, 5.27 format (b0 b1 b2 a1 a2).
+// Same values as in initSeq, used to switch the EQ at runtime.
+static const uint32_t SAMSUNG_BQ[10][5] = {
+  {0x32503645, 0x9B5F9376, 0x32503645, 0x0FF2BB0B, 0xF80D39FD},  // BQ1
+  {0x07FF8E36, 0xF001D69D, 0x07FEA98C, 0x0FFE2963, 0xF801C83F},  // BQ2
+  {0x08034C60, 0xF006B983, 0x07F612D5, 0x0FF9467D, 0xF806A0CB},  // BQ3
+  {0x07F8B084, 0xF01B094D, 0x07ECE2E1, 0x0FE4F6B3, 0xF81A6C9B},  // BQ4
+  {0x07F39796, 0xF02DDA22, 0x07DF8F0D, 0x0FD225DE, 0xF82CD95D},  // BQ5
+  {0x07F73C75, 0xF0324FDB, 0x07D944D4, 0x0FCDB025, 0xF82F7EB6},  // BQ6
+  {0x07E52816, 0xF0AA4C5C, 0x0778F7E9, 0x0F55B3A4, 0xF8A1E001},  // BQ7
+  {0x07966D4E, 0xF1ADD4E0, 0x06FC75CC, 0x0E522B20, 0xF96D1CE7},  // BQ8
+  {0x07C461F9, 0xF223D1AE, 0x06F88691, 0x0DDC2E52, 0xF9431776},  // BQ9
+  {0x0911CE57, 0xF4FB5690, 0x042E933D, 0x0B04A970, 0xFABF9E6B},  // BQ10
+};
+
+// ============================================================
+// I2C LOW LEVEL (with book/page cache)
+// ============================================================
+
+uint8_t cacheBook = 0xFF;
+uint8_t cachePage = 0xFF;
+
+void invalidatePageCache()
+{
+  cacheBook = 0xFF;
+  cachePage = 0xFF;
+}
+
+bool tw(uint8_t reg, uint8_t value)
+{
+  Wire.beginTransmission(TAS_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+bool tr(uint8_t reg, uint8_t &value)
+{
+  Wire.beginTransmission(TAS_ADDR);
+  Wire.write(reg);
+
+  if (Wire.endTransmission(false) != 0)
+    return false;
+
+  if (Wire.requestFrom((uint8_t)TAS_ADDR, (uint8_t)1) != 1)
+    return false;
+
+  value = Wire.read();
+  return true;
+}
+
+bool writeTx(const Tx &t)
+{
+  Wire.beginTransmission(TAS_ADDR);
+  Wire.write(t.reg);
+  for (uint8_t i = 0; i < t.len; i++)
+    Wire.write(t.d[i]);
+  return Wire.endTransmission() == 0;
+}
+
+bool selectBookPage(uint8_t book, uint8_t page)
+{
+  if (cacheBook == book && cachePage == page)
+    return true;
+
+  bool ok = tw(0x00, 0x00) && tw(0x7F, book) && tw(0x00, page);
+
+  if (ok)
+  {
+    cacheBook = book;
+    cachePage = page;
+  }
+  else
+  {
+    invalidatePageCache();
+  }
+  return ok;
+}
+
+bool book0()
+{
+  return selectBookPage(0x00, 0x00);
+}
+
+bool dspWrite32(uint8_t book, uint8_t page, uint8_t reg, int32_t value)
+{
+  if (!selectBookPage(book, page))
+    return false;
+
+  uint32_t v = (uint32_t)value;
+
+  Wire.beginTransmission(TAS_ADDR);
+  Wire.write(reg);
+  Wire.write((uint8_t)(v >> 24));
+  Wire.write((uint8_t)(v >> 16));
+  Wire.write((uint8_t)(v >> 8));
+  Wire.write((uint8_t)(v));
+  return Wire.endTransmission() == 0;
+}
+
+void show(uint8_t reg, const char *name)
+{
+  uint8_t v;
+  Serial.printf("R%02X %-10s = ", reg, name);
+  if (tr(reg, v))
+    Serial.printf("%02X\n", v);
+  else
+    Serial.println("ERROR");
+}
+
+void waitTas()
+{
+  Serial.println("Waiting TAS...");
+
+  while (true)
+  {
+    Wire.beginTransmission(TAS_ADDR);
+    if (Wire.endTransmission() == 0)
+      break;
+    delay(100);
+  }
+
+  Serial.println("TAS ACK OK");
+}
+
+// ============================================================
+// LOAD SAMSUNG CONFIG
+// ============================================================
+
+bool loadSamsung()
+{
+  size_t count = sizeof(initSeq) / sizeof(initSeq[0]);
+
+  Serial.printf("Loading %u Samsung writes...\n", (unsigned)count);
+
+  invalidatePageCache();
+
+  uint8_t curPage = 0;
+  uint8_t curBook = 0;
+
+  for (size_t i = 0; i < count; i++)
+  {
+    const Tx &t = initSeq[i];
+
+    if (t.reg == 0x00 && t.len == 1)
+      curPage = t.d[0];
+    else if (t.reg == 0x7F && t.len == 1 && curPage == 0)
+      curBook = t.d[0];
+
+    if (!writeTx(t))
+    {
+      Serial.printf("INIT FAIL #%u BOOK=%02X PAGE=%02X REG=%02X\n",
+                    (unsigned)(i + 1), curBook, curPage, t.reg);
+      invalidatePageCache();
+      return false;
+    }
+
+    delayMicroseconds(500);
+
+    if (curPage == 0 && curBook == 0)
+    {
+      if (t.reg == 0x01)
+        delay(20);
+      else if (t.reg == 0x03)
+        delay(5);
+    }
+  }
+
+  invalidatePageCache();
+  Serial.println("Samsung DSP config loaded");
+  return true;
+}
+
+// ============================================================
+// SETTINGS (NVS)
+// ============================================================
+
+void setDefaults(Settings &s)
+{
+  s.version   = CFG_VERSION;
+  s.phoneVol  = VOL_DEFAULT;
+  s.maxDbX2   = (int8_t)lround(VOL_MAX_DB_DEFAULT * 2.0f);
+  s.bass      = 0;
+  s.mid       = 0;
+  s.treble    = 0;
+  s.preset    = 0;
+  s.samsungEq = 1;
+  s.mode      = 0;
+  s.balance   = 0;
+  s.again     = 0;
+}
+
+int clampInt(int v, int lo, int hi)
+{
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
+
+void sanitize(Settings &s)
+{
+  s.phoneVol  = (uint8_t)clampInt(s.phoneVol, 0, 127);
+  s.maxDbX2   = (int8_t)clampInt(s.maxDbX2, -80, 0);
+  s.bass      = (int8_t)clampInt(s.bass,   -EQ_LIMIT_DB, EQ_LIMIT_DB);
+  s.mid       = (int8_t)clampInt(s.mid,    -EQ_LIMIT_DB, EQ_LIMIT_DB);
+  s.treble    = (int8_t)clampInt(s.treble, -EQ_LIMIT_DB, EQ_LIMIT_DB);
+  s.preset    = (int8_t)clampInt(s.preset, -1, PRESET_COUNT - 1);
+  s.samsungEq = s.samsungEq ? 1 : 0;
+  s.mode      = (uint8_t)clampInt(s.mode, 0, 2);
+  s.balance   = (int8_t)clampInt(s.balance, -100, 100);
+  s.again     = (uint8_t)clampInt(s.again, 0, 31);
+}
+
+void loadSettings()
+{
+  setDefaults(cfg);
+
+  prefs.begin("tasamp", false);
+
+  if (prefs.getBytesLength("cfg") == sizeof(Settings))
+  {
+    Settings tmp;
+    prefs.getBytes("cfg", &tmp, sizeof(tmp));
+    if (tmp.version == CFG_VERSION)
+      cfg = tmp;
+  }
+
+  sanitize(cfg);
+  Serial.println("Settings loaded");
+}
+
+void saveSettings()
+{
+  prefs.putBytes("cfg", &cfg, sizeof(cfg));
+  cfgDirty = false;
+  Serial.println("Settings saved");
+}
+
+void markDirty()
+{
+  cfgDirty = true;
+  cfgDirtyAt = millis();
+}
+
+// ============================================================
+// BIQUAD DESIGN (RBJ cookbook -> TI 5.27)
+// ============================================================
+
+BQ bqFlat()
+{
+  BQ r = {1.0, 0.0, 0.0, 0.0, 0.0};
+  return r;
+}
+
+BQ designPeak(double f0, double q, double gainDb)
+{
+  if (fabs(gainDb) < 0.01)
+    return bqFlat();
+
+  double A  = pow(10.0, gainDb / 40.0);
+  double w0 = 2.0 * M_PI * f0 / OUT_RATE;
+  double cs = cos(w0);
+  double al = sin(w0) / (2.0 * q);
+  double a0 = 1.0 + al / A;
+
+  BQ r;
+  r.b0 = (1.0 + al * A) / a0;
+  r.b1 = (-2.0 * cs) / a0;
+  r.b2 = (1.0 - al * A) / a0;
+  r.a1 = (2.0 * cs) / a0;

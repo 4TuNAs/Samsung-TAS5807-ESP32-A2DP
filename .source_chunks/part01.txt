@@ -1,0 +1,400 @@
+// ============================================================
+// TAS5806M / TAS5806MD (TSSOP-38, marked TAS5807M) + ESP32 A2DP
+// v2
+//
+// Arduino-ESP32 core 3.x (ESP-IDF 5.x), ESP32-A2DP library 1.8+
+//
+// Features:
+//  - Phone volume -> TAS digital volume (no software scaling)
+//  - EQ: Samsung EQ on/off + bass / mid / treble + presets
+//  - Buttons (vol+/-, play/pause, next, prev) and status LED
+//  - Channel mode (stereo / mono / swap), balance
+//  - Analog gain limit
+//  - Fault monitor with automatic restart
+//  - Track title / artist in Serial
+//  - All settings saved in flash (NVS)
+//
+// Serial Monitor: 115200, any line ending. Type "help".
+// ============================================================
+
+#include <Arduino.h>
+#include <Wire.h>
+#include <Preferences.h>
+#include <math.h>
+
+#include "BluetoothA2DPSink.h"
+
+#include "driver/i2s_std.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+// ============================================================
+// PINS
+// ============================================================
+
+#define TAS_ADDR       0x2C
+
+#define SDA_PIN        21
+#define SCL_PIN        22
+
+#define I2S_BCLK_PIN   26
+#define I2S_LRCLK_PIN  25
+#define I2S_DATA_PIN   27
+
+// Buttons: between pin and GND (internal pull-up). -1 = not used.
+// Do not use GPIO 34..39 without external pull-up resistors.
+#define BTN_VOL_UP     32
+#define BTN_VOL_DOWN   33
+#define BTN_PLAY       13   // short: play/pause, long: next EQ preset
+#define BTN_NEXT       14   // short: next track
+#define BTN_PREV        4   // short: previous track
+
+#define LED_PIN         2   // on-board LED on most DevKits, -1 = none
+#define LED_ON_LEVEL   HIGH
+
+// ============================================================
+// SETTINGS
+// ============================================================
+
+#define BT_NAME        "TAS5807 Speaker"
+#define OUT_RATE       48000
+#define USE_APLL       1
+
+// Phone volume 127 -> this DIG_VOL level (Samsung uses 0x3D = -6.5 dB).
+// Can be changed at runtime: "maxvol -10"
+#define VOL_MAX_DB_DEFAULT  -6.5f
+// Phone volume 1 -> max - VOL_RANGE_DB, phone volume 0 -> mute
+#define VOL_RANGE_DB        50.0f
+#define VOL_DEFAULT         80     // 0..127
+#define VOL_BUTTON_STEP     6      // ~2.4 dB per click
+
+// 0: buttons change volume locally (always works, phone slider may not follow)
+// 1: buttons send AVRCP vol+/- to the phone (phone slider follows,
+//    but some phones ignore these commands)
+#define BUTTON_VOL_VIA_PHONE 0
+
+// Samsung BQ1 has +16 dB gain. When Samsung EQ is off,
+// volume is raised by this amount so loudness stays similar.
+#define SAMSUNG_EQ_GAIN_DB  16.0f
+
+// User EQ bands
+#define EQ_BASS_HZ     100.0
+#define EQ_MID_HZ      1000.0
+#define EQ_MID_Q       0.7
+#define EQ_TREBLE_HZ   8000.0
+#define EQ_LIMIT_DB    12
+
+// Free biquads (pass-through in Samsung config) used for user EQ
+#define BQ_USER_BASS   11
+#define BQ_USER_MID    13
+#define BQ_USER_TREBLE 14
+
+// Also write right-channel biquads (left/right are normally ganged,
+// writing both is harmless and works in both cases)
+#define EQ_WRITE_RIGHT 1
+
+// DSP_MISC (0x66) values taken from the Samsung dump:
+// 0x05 while coefficients are written, 0x04 afterwards
+#define DSP_MISC_WRITE 0x05
+#define DSP_MISC_RUN   0x04
+
+// Samsung dump writes DEVICE_CTRL_1 (0x02) = 0x51:
+// FSW_SEL = 101, 1SPW, BTL. Code 101 is NOT listed in the
+// TAS5806M(D) datasheet (000=768k, 001=384k, 011=480k, 100=576k).
+// Leave commented unless you see faults/heat/distortion.
+//   0x01 = 768 kHz, 1SPW, BTL  (TI example for TAS5806MD)
+//   0x11 = 384 kHz, 1SPW, BTL
+// #define OVERRIDE_CTRL1 0x01
+
+// ============================================================
+// TYPES
+// (declared before any function: Arduino IDE inserts
+//  function prototypes above the first function)
+// ============================================================
+
+struct Tx {
+  uint8_t reg;
+  uint8_t len;
+  uint8_t d[4];
+};
+
+struct Stereo16 {
+  int16_t l;
+  int16_t r;
+};
+
+// Biquad in TI convention:
+// y = b0*x + b1*x1 + b2*x2 + a1*y1 + a2*y2
+struct BQ {
+  double b0, b1, b2, a1, a2;
+};
+
+#define CFG_VERSION 1
+
+struct Settings {
+  uint8_t version;
+  uint8_t phoneVol;    // 0..127
+  int8_t  maxDbX2;     // max volume in 0.5 dB
+  int8_t  bass;        // dB
+  int8_t  mid;
+  int8_t  treble;
+  int8_t  preset;      // -1 = custom
+  uint8_t samsungEq;   // 0/1
+  uint8_t mode;        // 0 stereo, 1 mono, 2 swap
+  int8_t  balance;     // -100 (left) .. +100 (right)
+  uint8_t again;       // 0..31, 0 = 0 dB, step -0.5 dB
+};
+
+struct Preset {
+  const char *name;
+  int8_t bass;
+  int8_t mid;
+  int8_t treble;
+};
+
+struct Button {
+  int8_t   pin;
+  bool     repeat;       // true: fires on press + auto-repeat
+  bool     raw;
+  bool     pressed;
+  bool     longDone;
+  uint32_t rawChangedAt;
+  uint32_t pressedAt;
+  uint32_t lastRepeatAt;
+};
+
+enum BtnEvent : uint8_t {
+  EV_NONE,
+  EV_SHORT,
+  EV_LONG,
+  EV_REPEAT
+};
+
+uint32_t fifoPopBlock(Stereo16 *dst, uint32_t maxFrames);
+
+// ============================================================
+// GLOBALS
+// ============================================================
+
+BluetoothA2DPSink   a2dp_sink;
+A2DPNoVolumeControl noSoftwareVolume;   // volume is done by the TAS
+Preferences         prefs;
+
+i2s_chan_handle_t txHandle = nullptr;
+
+Settings cfg;
+bool     cfgDirty   = false;
+uint32_t cfgDirtyAt = 0;
+
+float    eqHeadroomDb = 0;     // input attenuation for EQ boost
+uint8_t  curVolReg    = 0xFF;
+
+volatile bool     tasIsPlaying = false;
+volatile bool     playRequest  = false;
+volatile bool     muteRequest  = false;
+volatile bool     btConnected  = false;
+volatile bool     newConnection = false;
+volatile int      pendingPhoneVol = -1;
+volatile uint32_t lastPcmMillis = 0;
+
+bool     forcedPlay     = false;
+bool     faultLatched   = false;
+uint32_t lastPlayCmdAt  = 0;
+
+const Preset PRESETS[] = {
+  {"flat",   0,  0,  0},
+  {"bass",   6,  0,  1},
+  {"rock",   4, -2,  3},
+  {"vocal", -2,  3,  1},
+  {"night", -6,  2, -2},
+};
+const int PRESET_COUNT = sizeof(PRESETS) / sizeof(PRESETS[0]);
+
+const char *MODE_NAMES[] = {"stereo", "mono", "swap"};
+
+Button btnUp   = {BTN_VOL_UP,   true,  false, false, false, 0, 0, 0};
+Button btnDown = {BTN_VOL_DOWN, true,  false, false, false, 0, 0, 0};
+Button btnPlay = {BTN_PLAY,     false, false, false, false, 0, 0, 0};
+Button btnNext = {BTN_NEXT,     false, false, false, false, 0, 0, 0};
+Button btnPrev = {BTN_PREV,     false, false, false, false, 0, 0, 0};
+
+// ============================================================
+// SAMSUNG CONFIG (captured, with 2 missing coefficients restored)
+//
+// Register 0x7F selects the book ONLY on page 0.
+// A 4-byte write to 0x7C on other pages is a coefficient.
+// ============================================================
+
+#define W1(r,a)       {r,1,{a,0,0,0}}
+#define W2(r,a,b)     {r,2,{a,b,0,0}}
+#define W4(r,a,b,c,d) {r,4,{a,b,c,d}}
+
+static const Tx initSeq[] = {
+
+  W1(0x00,0x00),
+  W1(0x7F,0x00),
+  W1(0x78,0x80),
+  W1(0x03,0x02),
+  W1(0x01,0x11),          // soft reset (registers + DSP) -> long delay below
+
+  W1(0x00,0x00),
+  W1(0x7F,0x00),
+  W1(0x46,0x01),
+  W2(0x4E,0xFB,0xF0),
+  W1(0x02,0x51),          // FSW_SEL=101 (undocumented), 1SPW, BTL
+  W2(0x53,0x60,0x00),     // loop BW 175 kHz; AGAIN = 0 dB
+  W1(0x50,0x00),
+
+  W1(0x00,0x00),
+  W1(0x7F,0x00),
+  W1(0x66,0x05),
+  W1(0x4C,0x3D),
+  W1(0x30,0x00),
+  W1(0x77,0x00),          // TAS5806MD: headphone driver gain 0, muted, shut down
+  W1(0x03,0x0E),
+
+  // BOOK 8C PAGE 2A
+  W1(0x00,0x00),
+  W1(0x7F,0x8C),
+  W1(0x00,0x2A),
+
+  W4(0x30,0x00,0x71,0x94,0x9A),
+
+  // BOOK 8C PAGE 29
+  W1(0x00,0x00),
+  W1(0x7F,0x8C),
+  W1(0x00,0x29),
+
+  W4(0x18,0x00,0x80,0x00,0x00),
+  W4(0x1C,0x00,0x00,0x00,0x00),
+  W4(0x20,0x00,0x00,0x00,0x00),
+  W4(0x24,0x00,0x80,0x00,0x00),
+
+  // BOOK 8C PAGE 2A (DSP volume, temporarily +15 dB)
+  W1(0x00,0x00),
+  W1(0x7F,0x8C),
+  W1(0x00,0x2A),
+
+  W4(0x24,0x02,0xC4,0x89,0x2E),
+  W4(0x28,0x02,0xC4,0x89,0x2E),
+
+  // BOOK AA PAGE 2A
+  W1(0x00,0x00),
+  W1(0x7F,0xAA),
+  W1(0x00,0x2A),
+
+  W4(0x34,0x7F,0xFF,0xFF,0xFF),
+  W4(0x38,0x00,0x00,0x00,0x00),
+  W4(0x3C,0x00,0x00,0x00,0x00),
+  W4(0x40,0x00,0x00,0x00,0x00),
+  W4(0x44,0x00,0x00,0x00,0x00),
+
+  W4(0x48,0x7F,0xFF,0xFF,0xFF),
+  W4(0x4C,0x00,0x00,0x00,0x00),
+  W4(0x50,0x00,0x00,0x00,0x00),
+  W4(0x54,0x00,0x00,0x00,0x00),
+  W4(0x58,0x00,0x00,0x00,0x00),
+
+  // BOOK AA PAGE 2B
+  W1(0x00,0x2B),
+
+  W4(0x0C,0x7F,0xFF,0xFF,0xFF),
+  W4(0x10,0x00,0x00,0x00,0x00),
+  W4(0x14,0x00,0x00,0x00,0x00),
+  W4(0x18,0x00,0x00,0x00,0x00),
+  W4(0x1C,0x00,0x00,0x00,0x00),
+
+  W4(0x20,0x7F,0xFF,0xFF,0xFF),
+  W4(0x24,0x00,0x00,0x00,0x00),
+  W4(0x28,0x00,0x00,0x00,0x00),
+  W4(0x2C,0x00,0x00,0x00,0x00),
+  W4(0x30,0x00,0x00,0x00,0x00),
+
+  // BOOK 8C PAGE 2B
+  W1(0x00,0x00),
+  W1(0x7F,0x8C),
+  W1(0x00,0x2B),
+
+  W4(0x34,0x00,0x44,0x32,0x13),
+  W4(0x38,0x00,0x44,0x32,0x13),
+  W4(0x3C,0x00,0x03,0x69,0xC5),
+  W4(0x40,0x00,0x00,0x00,0x00),
+  W4(0x44,0x00,0x00,0x00,0x00),
+  W4(0x48,0x00,0x00,0x00,0x00),
+  W4(0x4C,0xF9,0xDA,0xBC,0x21),
+  W4(0x50,0xFE,0x01,0xC0,0x79),
+  W4(0x54,0x00,0x00,0x00,0x00),
+  W4(0x58,0x00,0x00,0x00,0x00),
+
+  // BOOK 8C PAGE 2C
+  W1(0x00,0x2C),
+
+  W4(0x0C,0x00,0x00,0x00,0x00),
+  W4(0x10,0x00,0x00,0x00,0x00),
+  W4(0x14,0x00,0x80,0x00,0x00),
+  W4(0x18,0x00,0x00,0x00,0x00),
+  W4(0x1C,0x00,0x80,0x00,0x00),
+  W4(0x20,0x00,0x00,0x00,0x00),
+
+  W4(0x28,0x00,0x00,0x00,0x00),
+  W4(0x2C,0x00,0x80,0x00,0x00),
+
+  W4(0x34,0x00,0x80,0x00,0x00),
+  W4(0x38,0x00,0x00,0x00,0x00),
+
+  W4(0x48,0x00,0x00,0x00,0x00),
+  W4(0x4C,0x00,0x80,0x00,0x00),
+
+  W4(0x5C,0x00,0x00,0x71,0x99),
+  W4(0x60,0x00,0x23,0x05,0x53),
+  W4(0x64,0x06,0xCB,0x9A,0x26),
+  W4(0x68,0xC0,0x00,0x00,0x00),
+  W4(0x6C,0x11,0xB2,0xB9,0xA8),
+
+  // BOOK 8C PAGE 2D
+  W1(0x00,0x2D),
+
+  W4(0x18,0x6E,0x4D,0x46,0x58),
+  W4(0x1C,0x00,0x00,0x57,0x62),
+  W4(0x20,0x00,0x00,0x00,0x00),
+  W4(0x24,0x00,0x00,0x00,0x00),
+  W4(0x28,0x00,0x00,0x00,0x00),
+  W4(0x2C,0x00,0x80,0x00,0x00),
+
+  W4(0x58,0x00,0x44,0x32,0x13),
+  W4(0x5C,0x00,0x44,0x32,0x13),
+  W4(0x60,0x00,0x03,0x69,0xC5),
+  W4(0x64,0x00,0x00,0x00,0x00),
+  W4(0x68,0x00,0x00,0x00,0x00),
+  W4(0x6C,0x00,0x00,0x00,0x00),
+
+  W4(0x70,0xF9,0xDA,0xBC,0x21),
+  W4(0x74,0xFE,0x01,0xC0,0x79),
+  W4(0x78,0x00,0x00,0x00,0x00),
+  W4(0x7C,0x00,0x00,0x00,0x00),   // coefficient 0x7C..0x7F, book unchanged
+
+  // BOOK 8C PAGE 2E (still book 8C)
+  W1(0x00,0x2E),
+
+  W4(0x08,0x00,0x4C,0xCC,0xCD),
+  W4(0x10,0x00,0x4C,0xCC,0xCD),
+  W4(0x18,0x00,0x80,0x00,0x00),
+  W4(0x1C,0x40,0x00,0x00,0x00),
+  W4(0x20,0x40,0x00,0x00,0x00),
+
+  W1(0x00,0x00),
+  W1(0x7F,0x00),
+  W1(0x03,0x0E),
+
+  // BOOK 8C PAGE 00
+  W1(0x00,0x00),
+  W1(0x7F,0x8C),
+  W1(0x00,0x00),
+
+  W2(0x7D,0x00,0x00),
+
+  // ----------------------------------------------------------
+  // BOOK AA PAGE 24 : biquads, format 5.27, order b0 b1 b2 a1 a2
+  // ----------------------------------------------------------
+  W1(0x00,0x00),
+  W1(0x7F,0xAA),
